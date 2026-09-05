@@ -18,5 +18,8 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  // `surface.ts` reads `../dist`, which exists only after a build; it is
+  // compiled by `tsconfig.surface.json` and by nothing else.
+  "exclude": ["src/surface.ts"]
 }

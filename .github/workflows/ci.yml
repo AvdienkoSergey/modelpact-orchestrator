@@ -29,5 +29,8 @@ jobs:
         run: npm run format:check
       - if: ${{ !cancelled() }}
         run: npm test
+      # Builds first, then reads the declarations back without `@types/node`:
+      # a node type in a public signature fails here and nowhere else. It
+      # covers `npm run build`, which is why that is not a step of its own.
       - if: ${{ !cancelled() }}
-        run: npm run build
+        run: npm run check:surface

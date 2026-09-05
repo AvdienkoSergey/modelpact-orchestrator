@@ -1,0 +1,11 @@
+{
+  // The emitted declarations, read the way a consumer without `@types/node`
+  // reads them: `types: []` and `skipLibCheck` off. A node type in a public
+  // signature fails here; a node import in a function body does not, because
+  // it never reaches the `.d.ts` — which is what lets `claude-cli.ts` spawn a
+  // child process and still ship a surface a browser build can compile.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "skipLibCheck": false, "types": [] },
+  "include": ["src/surface.ts"],
+  "exclude": []
+}

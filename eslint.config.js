@@ -4,7 +4,10 @@ import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
 
 export default defineConfig(
-  { ignores: ["dist/**"] },
+  // `src/surface.ts` is compiled and never run, by `tsconfig.surface.json`
+  // alone: it imports from `../dist`, which does not exist until a build, so
+  // no lint project can read it.
+  { ignores: ["dist/**", "src/surface.ts"] },
   {
     files: ["**/*.ts", "**/*.js"],
     extends: [
