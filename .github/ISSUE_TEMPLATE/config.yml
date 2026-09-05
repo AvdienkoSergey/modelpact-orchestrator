@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: A vulnerability
+    url: https://github.com/AvdienkoSergey/modelpact-orchestrator/security/advisories/new
+    about: Report it privately rather than as an issue — see SECURITY.md.
+  - name: Before opening a pull request
+    url: https://github.com/AvdienkoSergey/modelpact-orchestrator/blob/main/CONTRIBUTING.md
+    about: Every check CI runs, and the commit convention.
