@@ -122,6 +122,23 @@ then `message_start` — stalled every turn. The same latent bug was in the
 WebGPU backend, where two text-less chunks would have done it, and it was
 fixed there before it bit.
 
+## The demo
+
+```sh
+npm run demo    # then http://127.0.0.1:5175
+```
+
+[`demo/`](demo) is one conversation with the machinery beside it: which side
+took each turn and on what grounds, each side's own meter, and the reopen
+counter — `opened once, last on 4 messages` — which is the one rule this
+package makes up rather than inherits. Run local, cloud, local and watch it
+move.
+
+Under `escalate` the answer that was read and thrown away is drawn beside the
+record, struck through, because that is the only place it exists. It opens on
+two stub models, so there is something to poke at with neither `claude` nor a
+daemon on the machine; the pickers swap either side for the real thing.
+
 ## Tests
 
 [`src/orchestrate.test.ts`](src/orchestrate.test.ts) does **not** run the
@@ -154,6 +171,8 @@ npm run chat    # a terminal chat; POLICY=predicate|escalate|classify
 | `npm test`              | Vitest; the live suite skips without `claude` and a daemon |
 | `npm run check:surface` | builds, then reads the declarations without `@types/node`  |
 | `npm run build`         | `dist/` — JS, declarations, maps                           |
+| `npm run demo`          | builds, then serves [`demo/`](demo) on `127.0.0.1:5175`    |
+| `npm run chat`          | the same two models in a terminal                          |
 
 ## Releases
 

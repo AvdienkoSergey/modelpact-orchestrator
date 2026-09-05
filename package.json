@@ -34,6 +34,9 @@
     "dist"
   ],
   "sideEffects": false,
+  "workspaces": [
+    "demo"
+  ],
   "engines": {
     "node": ">=22"
   },
@@ -48,7 +51,8 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build",
     "check:surface": "npm run build && tsc -p tsconfig.surface.json",
-    "chat": "npm run build && node dist/chat.js"
+    "chat": "npm run build && node dist/chat.js",
+    "demo": "npm run build && npm run dev --workspace demo"
   },
   "peerDependencies": {
     "modelpact": ">=2"

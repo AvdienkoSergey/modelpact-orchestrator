@@ -1,0 +1,326 @@
+:root {
+  color-scheme: light dark;
+  --ink: #16181d;
+  --dim: #5c6370;
+  --line: #d8dbe2;
+  --ground: #ffffff;
+  --sunk: #f4f5f8;
+  --accent: #2f5fd0;
+  --local: #1a7f4b;
+  --cloud: #8a4bd0;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e6e8ee;
+    --dim: #9aa1ad;
+    --line: #2c313a;
+    --ground: #14161a;
+    --sunk: #1b1e24;
+    --accent: #7ea2f0;
+    --local: #4fbe86;
+    --cloud: #b98ef0;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+  height: 100vh;
+  color: var(--ink);
+  background: var(--ground);
+}
+
+@media (max-width: 900px) {
+  body {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+}
+
+.record-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  padding: 1.5rem 2rem;
+  gap: 1rem;
+}
+.record-pane h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+}
+.lede {
+  margin: 0;
+  color: var(--dim);
+  font-size: 0.9rem;
+}
+
+.record {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem 0;
+  display: grid;
+  gap: 0.9rem;
+  align-content: start;
+  overflow-y: auto;
+  min-height: 0;
+}
+.empty {
+  color: var(--dim);
+  font-size: 0.9rem;
+  max-width: 34rem;
+}
+
+.turn {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: start;
+}
+.turn-user {
+  justify-items: end;
+}
+.bubble {
+  max-width: 42rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--sunk);
+}
+.turn-user .bubble {
+  background: var(--ground);
+}
+.bubble p {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.badge {
+  display: inline-block;
+  margin-bottom: 0.35rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.badge-local {
+  color: var(--local);
+}
+.badge-cloud {
+  color: var(--cloud);
+}
+
+.aside-line {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The answer the policy read and threw away. Drawn beside the record, not in
+   it, because that is exactly where it is. */
+.dropped {
+  margin: 0;
+  max-width: 42rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 2px dashed var(--line);
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+.dropped p {
+  margin: 0.2rem 0 0;
+  text-decoration: line-through;
+  text-decoration-color: var(--line);
+}
+.dropped-tag {
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.composer {
+  display: grid;
+  gap: 0.5rem;
+}
+.composer textarea {
+  font: inherit;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--ground);
+  color: var(--ink);
+  resize: vertical;
+}
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.composer-actions .hint {
+  flex: 1 1 auto;
+}
+button {
+  font: inherit;
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+button.ghost {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--dim);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.panel {
+  border-left: 1px solid var(--line);
+  background: var(--sunk);
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.4rem;
+  overflow-y: auto;
+}
+.panel-title {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.panel section {
+  display: grid;
+  gap: 0.5rem;
+}
+.panel h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.hint {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--dim);
+}
+
+.choices {
+  display: grid;
+  gap: 0.35rem;
+}
+.choice-group {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+.choice-name {
+  width: 3.6rem;
+  font-size: 0.75rem;
+  color: var(--dim);
+}
+.choice {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--line);
+  background: var(--ground);
+  color: var(--dim);
+}
+.choice[data-chosen="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.sides {
+  display: grid;
+  gap: 0.6rem;
+}
+.side {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--ground);
+}
+.side-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.side-name {
+  font-size: 0.85rem;
+}
+.side-label {
+  font-size: 0.75rem;
+  color: var(--dim);
+  margin-left: auto;
+}
+.side-line {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.row {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.chip {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+}
+.chip[data-kind="ready"],
+.chip[data-kind="current"] {
+  color: var(--local);
+  border-color: var(--local);
+}
+.chip[data-kind="unavailable"] {
+  color: #b4442c;
+  border-color: #b4442c;
+}
+
+.log {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--dim);
+  max-height: 16rem;
+  overflow-y: auto;
+}
+.log code {
+  color: var(--ink);
+}
+.log .side-tag {
+  font-weight: 600;
+}
+.log-error {
+  color: #b4442c;
+}
+.log-setup {
+  color: var(--ink);
+}
