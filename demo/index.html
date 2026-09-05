@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>modelpact-orchestrator</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <!--
+      Left is the record: one conversation, whoever answered each turn of it.
+      Right is the machinery that decided — the policy, the two sides and what
+      each of them has been told. The split is the argument: a session is one
+      model's, and everything on the right is what it takes to put two of them
+      in the thing on the left.
+    -->
+    <main class="record-pane">
+      <header>
+        <h1>One record, two models</h1>
+        <p class="lede">
+          Every turn below went to one side or the other. The badge says which,
+          and the panel says why.
+        </p>
+      </header>
+
+      <ol id="record" class="record" data-testid="record"></ol>
+
+      <form id="composer" class="composer">
+        <textarea
+          id="input"
+          rows="2"
+          spellcheck="false"
+          placeholder="Say something short. Then ask it why."
+        ></textarea>
+        <div class="composer-actions">
+          <span id="hint" class="hint"></span>
+          <button type="button" id="reset" class="ghost">Clear</button>
+          <button type="submit" id="send">Send</button>
+        </div>
+      </form>
+    </main>
+
+    <aside class="panel">
+      <h2 class="panel-title">modelpact-orchestrator</h2>
+
+      <section>
+        <h3>The policy</h3>
+        <div id="policy" class="choices" data-testid="policy"></div>
+        <p id="rule" class="hint"></p>
+      </section>
+
+      <section>
+        <h3>The two sides</h3>
+        <p class="hint">
+          Two models have two windows and two tokenizers, so there are two
+          meters here and no third.
+        </p>
+        <div id="sides" class="sides" data-testid="sides"></div>
+      </section>
+
+      <section>
+        <h3>What it did</h3>
+        <ol id="log" class="log" data-testid="log"></ol>
+      </section>
+    </aside>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

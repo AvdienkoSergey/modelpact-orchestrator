@@ -1,0 +1,19 @@
+{
+  "name": "modelpact-orchestrator-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "modelpact": "^2.2.0",
+    "modelpact-orchestrator": "file:..",
+    "modelpact-providers": "^1.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "typescript": "~6.0.3",
+    "vite": "^7.1.14"
+  }
+}

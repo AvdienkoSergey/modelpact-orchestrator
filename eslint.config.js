@@ -6,8 +6,10 @@ import prettier from "eslint-config-prettier";
 export default defineConfig(
   // `src/surface.ts` is compiled and never run, by `tsconfig.surface.json`
   // alone: it imports from `../dist`, which does not exist until a build, so
-  // no lint project can read it.
-  { ignores: ["dist/**", "src/surface.ts"] },
+  // no lint project can read it. `demo/` is its own package, against the
+  // published `exports` map and with its own tsconfig; linting it from here
+  // type-checks it against the wrong project.
+  { ignores: ["dist/**", "demo/**", "src/surface.ts"] },
   {
     files: ["**/*.ts", "**/*.js"],
     extends: [
