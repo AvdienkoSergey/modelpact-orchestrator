@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0](https://github.com/AvdienkoSergey/modelpact-orchestrator/compare/v1.1.0...v1.2.0) (2026-09-12)
+
+
+### Features
+
+* the cost that reaches the caller ([6fb4163](https://github.com/AvdienkoSergey/modelpact-orchestrator/commit/6fb41634f2fafa08fce8e54b1d03425b2c1059e1))
+* the cost that reaches the caller ([19c79ef](https://github.com/AvdienkoSergey/modelpact-orchestrator/commit/19c79ef5989d03712d167b0b6439a0f5c60556ac))
+
 ## [1.1.0](https://github.com/AvdienkoSergey/modelpact-orchestrator/compare/v1.0.1...v1.1.0) (2026-09-12)
 
 
