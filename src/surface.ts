@@ -9,6 +9,7 @@ import {
   makeClaudeCliProvider,
   orchestrate,
   type Answer,
+  type AskOptions,
   type ClaudeCliConfig,
   type Orchestrator,
   type OrchestratorParts,
@@ -25,6 +26,7 @@ export const values = {
 };
 export type Types = [
   Answer,
+  AskOptions,
   ClaudeCliConfig,
   Orchestrator,
   OrchestratorParts,

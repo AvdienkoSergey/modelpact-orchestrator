@@ -12,8 +12,8 @@
  * every backend to read `request.history`, so the conversation is rendered
  * into the prompt each time and nothing is left in the CLI's own session store.
  *
- * Shapes were read off `claude` 2.1.138 with `--include-partial-messages`;
- * nothing here is from the docs.
+ * Shapes were read off `claude` 2.1.138 with `--include-partial-messages`, and
+ * the structured-output shape off 2.1.236; nothing here is from the docs.
  */
 
 import { spawn } from "node:child_process";
@@ -68,6 +68,13 @@ export interface ClaudeCliConfig {
 
 const DEFAULTS = { contextWindow: 200_000, command: "claude" };
 
+/**
+ * The CLI's own tool that carries structured output, and the one tool that
+ * `--tools ""` leaves switched on. Under `--json-schema` the answer is a call
+ * to it, not text.
+ */
+const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
+
 const ZERO_TOKENS = tokens(0) ?? (0 as never);
 
 const makeRealSpawner =
@@ -105,6 +112,40 @@ const parseJson = (text: string): unknown => {
   } catch {
     return null;
   }
+};
+
+/**
+ * The `result` line under a schema carries the object whole as well:
+ * `structured_output` as a value, `result` as its JSON text. Read when no piece
+ * of it came through the stream.
+ */
+const readStructuredResult = (line: Record<string, unknown>): string | null => {
+  const wholeObject = asRecord(line.structured_output);
+  if (wholeObject !== null) return JSON.stringify(wholeObject);
+  const resultText = line.result;
+  return typeof resultText === "string" &&
+    asRecord(parseJson(resultText)) !== null
+    ? resultText
+    : null;
+};
+
+/**
+ * The CLI's own words for a failed turn. `result` carries them for a budget
+ * or an API error; a turn that ended some other way — the turn cap, say —
+ * leaves it empty and says why in `subtype`, and a detail that only said
+ * "claude reported an error" hid exactly the case worth reading.
+ */
+const describeCliError = (line: Record<string, unknown>): string => {
+  const words = typeof line.result === "string" ? line.result.trim() : "";
+  const subtype = typeof line.subtype === "string" ? line.subtype : "";
+  const status =
+    typeof line.api_error_status === "number"
+      ? `api status ${line.api_error_status}`
+      : "";
+  const parts = [words, subtype, status].filter((part) => part !== "");
+  return parts.length === 0
+    ? "claude reported an error"
+    : `claude reported an error: ${parts.join(", ")}`;
 };
 
 const readAllText = async (
@@ -168,17 +209,6 @@ class ClaudeCliConnection implements ModelConnection {
     input: string,
     request: GenerateRequest,
   ): Promise<Result<ReadableStream<string>, AiFailure>> => {
-    // Refused, not dropped: `--json-schema` returned `is_error` in this mode
-    // on 2.1.138, and the contract allows a refusal, never a silent prose reply.
-    if (request.schema !== undefined) {
-      return Promise.resolve(
-        err({
-          kind: "unsupported-config",
-          languages: [],
-          cause: 'claude -p --json-schema fails with --tools ""',
-        }),
-      );
-    }
     const args = this.#toCliArgs(input, request);
     let child: Spawned;
     try {
@@ -188,7 +218,10 @@ class ClaudeCliConnection implements ModelConnection {
         err({ kind: "failed", detail: "could not start claude", cause }),
       );
     }
-    return Promise.resolve(ok(this.#toDeltaStream(child, request.signal)));
+    const isStructured = request.schema !== undefined;
+    return Promise.resolve(
+      ok(this.#toDeltaStream(child, request.signal, isStructured)),
+    );
   };
 
   readonly usage = (): ContextUsage =>
@@ -204,6 +237,14 @@ class ClaudeCliConnection implements ModelConnection {
     const system = [this.#system, CONTINUE_INSTRUCTION]
       .filter(Boolean)
       .join("\n\n");
+    // One turn is the whole of a plain answer. Under a schema the CLI spends
+    // turns of its own: the `StructuredOutput` call is one, and a model that
+    // writes a sentence first is nudged by the CLI — "[structured-output-
+    // enforce] You MUST call the StructuredOutput tool" — and needs a third.
+    // Capped at 1 that ends as `error_max_turns` with an empty `result`;
+    // measured on 2.1.236, and the extra turns can loop on nothing, since
+    // `--tools ""` leaves that one tool and no other.
+    const maxTurns = request.schema === undefined ? "1" : "3";
     const args = [
       "-p",
       renderPrompt(request.history, input),
@@ -212,7 +253,7 @@ class ClaudeCliConnection implements ModelConnection {
       "--verbose",
       "--include-partial-messages",
       "--max-turns",
-      "1",
+      maxTurns,
       "--no-session-persistence",
       // No tools: this is a model behind a contract, not an agent in a repo.
       "--tools",
@@ -224,6 +265,13 @@ class ClaudeCliConnection implements ModelConnection {
       args.push("--model", this.#config.model);
     if (this.#config.maxBudgetUsd !== undefined)
       args.push("--max-budget-usd", String(this.#config.maxBudgetUsd));
+    // Structured output rides on the CLI's own `StructuredOutput` tool, which
+    // is why this flag failed under `--tools ""` on 2.1.138: the empty list
+    // switched that tool off with the rest, and the turn came back `is_error`.
+    // 2.1.236 keeps it on, measured, and the answer arrives as that tool's
+    // input rather than as text — the reader below knows.
+    if (request.schema !== undefined)
+      args.push("--json-schema", JSON.stringify(request.schema));
     return args;
   }
 
@@ -231,8 +279,20 @@ class ClaudeCliConnection implements ModelConnection {
    * Deltas out of the NDJSON, usage out of the last line. The abort is the
    * lifecycle's to notice; what is ours is to stop the process when it does,
    * and to close rather than error when the CLI itself ended the turn.
+   *
+   * Under a schema the answer is not the text. The CLI delivers structured
+   * output as a call to its own `StructuredOutput` tool, streamed as the
+   * `input_json_delta` pieces of one `tool_use` block, and a text block beside
+   * it is the model's remark about the answer ("Ok.") rather than the answer.
+   * Measured on 2.1.236. So in that mode the text is dropped, the pieces of
+   * that one block are the stream, and a turn that ends without the block is
+   * a failure — never prose handed to a caller that is about to parse it.
    */
-  #toDeltaStream(child: Spawned, signal: AbortSignal): ReadableStream<string> {
+  #toDeltaStream(
+    child: Spawned,
+    signal: AbortSignal,
+    isStructured: boolean,
+  ): ReadableStream<string> {
     const lineReader = child.stdout
       .pipeThrough(new TextDecoderStream())
       .pipeThrough(ndjsonLines())
@@ -248,6 +308,49 @@ class ClaudeCliConnection implements ModelConnection {
       child.kill();
     };
     signal.addEventListener("abort", stopChild, { once: true });
+
+    let structuredIndex: number | null = null;
+    let hasStructuredOutput = false;
+
+    const readStructuredDelta = (
+      event: Record<string, unknown>,
+    ): string | null => {
+      if (event.type === "content_block_start") {
+        const block = asRecord(event.content_block);
+        if (
+          block?.type === "tool_use" &&
+          block.name === STRUCTURED_OUTPUT_TOOL &&
+          typeof event.index === "number"
+        )
+          structuredIndex = event.index;
+        return null;
+      }
+      if (
+        event.type !== "content_block_delta" ||
+        event.index !== structuredIndex
+      )
+        return null;
+      const delta = asRecord(event.delta);
+      const piece =
+        delta?.type === "input_json_delta" ? delta.partial_json : null;
+      // The first piece on the wire is empty, and an empty enqueue is a pull
+      // that made no progress.
+      if (typeof piece !== "string" || piece === "") return null;
+      hasStructuredOutput = true;
+      return piece;
+    };
+
+    const readDelta = (line: Record<string, unknown>): string | null => {
+      if (line.type !== "stream_event") return null;
+      const event = asRecord(line.event);
+      if (event === null) return null;
+      if (isStructured) return readStructuredDelta(event);
+      if (event.type !== "content_block_delta") return null;
+      const delta = asRecord(event.delta);
+      return delta?.type === "text_delta" && typeof delta.text === "string"
+        ? delta.text
+        : null;
+    };
 
     return new ReadableStream<string>({
       // A pull must make progress — enqueue, close or throw — before it
@@ -272,13 +375,31 @@ class ClaudeCliConnection implements ModelConnection {
                   stderrDetail === "" ? `claude exited ${code}` : stderrDetail,
               });
             }
+            if (isStructured && !hasStructuredOutput && code !== 143)
+              throw new AiError({
+                kind: "failed",
+                detail: "claude answered without structured output",
+              });
             controller.close();
             return;
           }
           const line = asRecord(parseJson(nextLine.value));
           if (line === null) continue;
-          if (line.type === "result") this.#finishTurn(line);
-          const delta = this.#readDelta(line);
+          if (line.type === "result") {
+            this.#finishTurn(line);
+            // A CLI that prints the block without partial messages still puts
+            // the whole object on this line.
+            const wholeObject =
+              isStructured && !hasStructuredOutput
+                ? readStructuredResult(line)
+                : null;
+            if (wholeObject !== null) {
+              hasStructuredOutput = true;
+              controller.enqueue(wholeObject);
+              return;
+            }
+          }
+          const delta = readDelta(line);
           if (delta !== null) {
             controller.enqueue(delta);
             return;
@@ -289,26 +410,10 @@ class ClaudeCliConnection implements ModelConnection {
     });
   }
 
-  #readDelta(line: Record<string, unknown>): string | null {
-    if (line.type !== "stream_event") return null;
-    const event = asRecord(line.event);
-    if (event?.type !== "content_block_delta") return null;
-    const delta = asRecord(event.delta);
-    return delta?.type === "text_delta" && typeof delta.text === "string"
-      ? delta.text
-      : null;
-  }
-
   /** The `result` line: the CLI's own error flag, and the counts for the meter. */
   #finishTurn(line: Record<string, unknown>): void {
-    if (line.is_error === true) {
-      const reportedResult = line.result;
-      const detail =
-        typeof reportedResult === "string"
-          ? reportedResult
-          : "claude reported an error";
-      throw new AiError({ kind: "failed", detail });
-    }
+    if (line.is_error === true)
+      throw new AiError({ kind: "failed", detail: describeCliError(line) });
     const usage = asRecord(line.usage) ?? {};
     this.#usedTokens =
       asNumber(usage.input_tokens) +

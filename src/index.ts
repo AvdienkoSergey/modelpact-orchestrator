@@ -8,6 +8,7 @@ export {
 export {
   orchestrate,
   type Answer,
+  type AskOptions,
   type Orchestrator,
   type OrchestratorParts,
   type Policy,

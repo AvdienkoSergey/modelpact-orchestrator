@@ -1,8 +1,9 @@
 /**
  * The CLI backend on a process made of strings. The lines are the ones a real
  * `claude -p --output-format stream-json --include-partial-messages` printed
- * on 2.1.138, so the parser is held to the real shape, not a convenient one.
- * `live.test.ts` is where the real binary runs, when it is there.
+ * on 2.1.138, and under `--json-schema` on 2.1.236, so the parser is held to
+ * the real shape, not a convenient one. `live.test.ts` is where the real
+ * binary runs, when it is there.
  */
 import { describe, expect, test } from "vitest";
 import { describeContract, CONTRACT_SCHEMA } from "modelpact/testing";
@@ -30,45 +31,126 @@ interface ScriptOptions {
   readonly exitCode?: number;
   readonly stderr?: string;
   readonly isError?: boolean;
+  /** The result line's subtype on an error; with it set, `result` is left out, as the CLI does for a turn cap. */
+  readonly errorSubtype?: string;
   readonly delayMs?: number;
+  /** What the `StructuredOutput` block carries when the call has a schema. */
+  readonly structured?: Record<string, unknown>;
+  /** Where the object is printed under a schema: streamed as the block, on the result line only, or nowhere. */
+  readonly structuredDelivery?: "stream" | "result" | "none";
 }
+
+const streamEvent = (event: unknown): string =>
+  toNdjsonLine({ type: "stream_event", event });
+
+const USAGE = {
+  input_tokens: 6,
+  cache_read_input_tokens: 10,
+  cache_creation_input_tokens: 4,
+};
+
+/** A plain turn: text deltas, then the result line. */
+const makeTextLines = (options: ScriptOptions): string[] => {
+  const answerText = options.answer ?? "one, two, three, four, five";
+  const words = answerText.match(/\S+\s*/g) ?? [answerText];
+  return [
+    toNdjsonLine({ type: "system", subtype: "init", model: "claude-opus-4-7" }),
+    streamEvent({ type: "message_start" }),
+    ...words.map((text) =>
+      streamEvent({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text },
+      }),
+    ),
+    streamEvent({ type: "message_stop" }),
+    toNdjsonLine({
+      type: "result",
+      subtype:
+        options.errorSubtype ??
+        (options.isError === true ? "error" : "success"),
+      is_error: options.isError === true,
+      ...(options.errorSubtype !== undefined
+        ? {}
+        : {
+            result: options.isError === true ? "budget exceeded" : answerText,
+          }),
+      usage: { ...USAGE, output_tokens: options.outputTokens ?? words.length },
+    }),
+  ];
+};
+
+/**
+ * A schema turn as 2.1.236 prints it: a remark as a text block, then the
+ * object as a `StructuredOutput` tool_use block whose first piece is empty,
+ * and the whole object again on the result line.
+ */
+const makeStructuredLines = (options: ScriptOptions): string[] => {
+  const object = options.structured ?? { city: "Paris" };
+  const json = JSON.stringify(object);
+  const delivery = options.structuredDelivery ?? "stream";
+  const half = Math.ceil(json.length / 2);
+  const blockLines =
+    delivery !== "stream"
+      ? []
+      : [
+          streamEvent({
+            type: "content_block_start",
+            index: 1,
+            content_block: { type: "tool_use", name: "StructuredOutput" },
+          }),
+          ...["", json.slice(0, half), json.slice(half)].map((partial_json) =>
+            streamEvent({
+              type: "content_block_delta",
+              index: 1,
+              delta: { type: "input_json_delta", partial_json },
+            }),
+          ),
+          streamEvent({ type: "content_block_stop", index: 1 }),
+        ];
+  return [
+    toNdjsonLine({
+      type: "system",
+      subtype: "init",
+      model: "claude-sonnet-4-6",
+    }),
+    streamEvent({ type: "message_start" }),
+    streamEvent({
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text" },
+    }),
+    streamEvent({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: "Ok." },
+    }),
+    streamEvent({ type: "content_block_stop", index: 0 }),
+    ...blockLines,
+    streamEvent({ type: "message_stop" }),
+    toNdjsonLine({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      ...(delivery === "none"
+        ? { result: "Ok." }
+        : { result: json, structured_output: object }),
+      usage: { ...USAGE, output_tokens: options.outputTokens ?? 3 },
+    }),
+  ];
+};
 
 /** What the CLI prints for one turn, delta by delta, at a pace a test can interrupt. */
 const makeScriptStream = (
   options: ScriptOptions,
+  args: readonly string[],
 ): ReadableStream<BufferSource> => {
-  const answerText = options.answer ?? "one, two, three, four, five";
-  const words = answerText.match(/\S+\s*/g) ?? [answerText];
   const delayMs = options.delayMs ?? 1;
   const encoder = new TextEncoder();
   let step = 0;
-  const lines = [
-    toNdjsonLine({ type: "system", subtype: "init", model: "claude-opus-4-7" }),
-    toNdjsonLine({ type: "stream_event", event: { type: "message_start" } }),
-    ...words.map((text) =>
-      toNdjsonLine({
-        type: "stream_event",
-        event: {
-          type: "content_block_delta",
-          index: 0,
-          delta: { type: "text_delta", text },
-        },
-      }),
-    ),
-    toNdjsonLine({ type: "stream_event", event: { type: "message_stop" } }),
-    toNdjsonLine({
-      type: "result",
-      subtype: options.isError === true ? "error" : "success",
-      is_error: options.isError === true,
-      result: options.isError === true ? "budget exceeded" : answerText,
-      usage: {
-        input_tokens: 6,
-        cache_read_input_tokens: 10,
-        cache_creation_input_tokens: 4,
-        output_tokens: options.outputTokens ?? words.length,
-      },
-    }),
-  ];
+  const lines = args.includes("--json-schema")
+    ? makeStructuredLines(options)
+    : makeTextLines(options);
   return new ReadableStream<BufferSource>({
     pull: async (controller) => {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -107,7 +189,7 @@ const makeSpawner = (
     const exited = new Promise<number | null>((resolve) => {
       resolveExit = resolve;
     });
-    const stdout = makeScriptStream(options).pipeThrough(
+    const stdout = makeScriptStream(options, args).pipeThrough(
       new TransformStream<BufferSource, BufferSource>({
         flush: () => {
           resolveExit(options.exitCode ?? 0);
@@ -193,19 +275,63 @@ describe("claude-cli mapping", () => {
     // A model behind a contract, not an agent in a repo.
     expect(args).toContain("--tools");
     expect(args[args.indexOf("--tools") + 1]).toBe("");
+    expect(args).not.toContain("--json-schema");
+    expect(args[args.indexOf("--max-turns") + 1]).toBe("1");
     expect(args).toContain("--no-session-persistence");
     expect(args[args.indexOf("--system-prompt") + 1]).toContain("Be brief.");
     session.close();
   });
 
-  test("a schema is refused, because the CLI's own flag fails in this mode", async () => {
-    const session = await mustOpenSession(makeStubbedProvider());
+  test("a schema goes out as --json-schema, and the answer is the object, not the remark beside it", async () => {
+    const { spawn, recorded } = makeSpawner();
+    const session = await mustOpenSession(makeClaudeCliProvider({ spawn }));
     const answerResult = await session.prompt("Name the capital of France.", {
       schema: CONTRACT_SCHEMA,
     });
+    const args = recorded.calls.at(-1) ?? [];
+    expect(args[args.indexOf("--json-schema") + 1]).toBe(
+      JSON.stringify(CONTRACT_SCHEMA),
+    );
+    // Still none of ours: the tool that carries the object is the CLI's own.
+    expect(args[args.indexOf("--tools") + 1]).toBe("");
+    // Room for the CLI's own turns: the call, and a nudge if text came first.
+    expect(args[args.indexOf("--max-turns") + 1]).toBe("3");
+    expect(answerResult.ok).toBe(true);
+    if (answerResult.ok) {
+      expect(JSON.parse(answerResult.value)).toEqual({ city: "Paris" });
+      expect(answerResult.value).not.toContain("Ok.");
+    }
+    session.close();
+  });
+
+  test("a schema turn that prints the object only on the result line still answers with it", async () => {
+    const session = await mustOpenSession(
+      makeStubbedProvider({ structuredDelivery: "result" }),
+    );
+    const answerResult = await session.prompt("Name it.", {
+      schema: CONTRACT_SCHEMA,
+    });
+    expect(answerResult.ok).toBe(true);
+    if (answerResult.ok)
+      expect(JSON.parse(answerResult.value)).toEqual({ city: "Paris" });
+    session.close();
+  });
+
+  test("a schema turn with no object anywhere is a failure, never prose", async () => {
+    const session = await mustOpenSession(
+      makeStubbedProvider({ structuredDelivery: "none" }),
+    );
+    const answerResult = await session.prompt("Name it.", {
+      schema: CONTRACT_SCHEMA,
+    });
     expect(answerResult.ok).toBe(false);
-    if (!answerResult.ok)
-      expect(answerResult.error.kind).toBe("unsupported-config");
+    if (!answerResult.ok) {
+      expect(answerResult.error.kind).toBe("failed");
+      if (answerResult.error.kind === "failed")
+        expect(answerResult.error.detail).toContain(
+          "without structured output",
+        );
+    }
     session.close();
   });
 
@@ -246,8 +372,22 @@ describe("claude-cli mapping", () => {
     );
     const answerResult = await session.prompt("hello");
     expect(answerResult.ok).toBe(false);
+    if (!answerResult.ok && answerResult.error.kind === "failed") {
+      expect(answerResult.error.detail).toContain("budget exceeded");
+      // The subtype names the kind of ending, and it is kept beside the words.
+      expect(answerResult.error.detail).toContain("error");
+    }
+    session.close();
+  });
+
+  test("an error with no words in result still says what kind it was", async () => {
+    const session = await mustOpenSession(
+      makeStubbedProvider({ isError: true, errorSubtype: "error_max_turns" }),
+    );
+    const answerResult = await session.prompt("hello");
+    expect(answerResult.ok).toBe(false);
     if (!answerResult.ok && answerResult.error.kind === "failed")
-      expect(answerResult.error.detail).toBe("budget exceeded");
+      expect(answerResult.error.detail).toContain("error_max_turns");
     session.close();
   });
 
