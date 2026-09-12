@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/AvdienkoSergey/modelpact-orchestrator/compare/v1.0.1...v1.1.0) (2026-09-12)
+
+
+### Features
+
+* the schema that reaches both sides ([8ff91e0](https://github.com/AvdienkoSergey/modelpact-orchestrator/commit/8ff91e089e7a1d3b3fd63f88a2b173f313729238))
+* the schema that reaches both sides ([a331f4e](https://github.com/AvdienkoSergey/modelpact-orchestrator/commit/a331f4e98f293d9ba06cff4773463c981c47751d))
+
 ## [1.0.1](https://github.com/AvdienkoSergey/modelpact-orchestrator/compare/v1.0.0...v1.0.1) (2026-09-05)
 
 
