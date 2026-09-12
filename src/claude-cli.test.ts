@@ -11,6 +11,7 @@ import type { AiProvider } from "modelpact";
 
 import {
   makeClaudeCliProvider,
+  type CliTurn,
   type Spawned,
   type Spawner,
 } from "./claude-cli.js";
@@ -49,6 +50,9 @@ const USAGE = {
   cache_creation_input_tokens: 4,
 };
 
+/** What a result line says about money and time, as 2.1.236 prints it. */
+const BILL = { total_cost_usd: 0.0123, duration_ms: 1500, num_turns: 1 };
+
 /** A plain turn: text deltas, then the result line. */
 const makeTextLines = (options: ScriptOptions): string[] => {
   const answerText = options.answer ?? "one, two, three, four, five";
@@ -76,6 +80,7 @@ const makeTextLines = (options: ScriptOptions): string[] => {
             result: options.isError === true ? "budget exceeded" : answerText,
           }),
       usage: { ...USAGE, output_tokens: options.outputTokens ?? words.length },
+      ...BILL,
     }),
   ];
 };
@@ -400,5 +405,39 @@ describe("claude-cli mapping", () => {
     expect(usage.kind).toBe("bounded");
     if (usage.kind === "bounded") expect(usage.used).toBe(6 + 10 + 4 + 7);
     session.close();
+  });
+
+  test("the bill reaches onTurn, and a refused turn is billed too", async () => {
+    const turns: CliTurn[] = [];
+    const paid = await mustOpenSession(
+      makeClaudeCliProvider({
+        spawn: makeSpawner({ outputTokens: 7 }).spawn,
+        onTurn: (turn) => turns.push(turn),
+      }),
+    );
+    await paid.prompt("hello");
+    paid.close();
+    expect(turns).toEqual([
+      {
+        costUsd: 0.0123,
+        durationMs: 1500,
+        numTurns: 1,
+        usage: { input: 6, output: 7, cacheRead: 10, cacheCreation: 4 },
+        isError: false,
+      },
+    ]);
+
+    const refused = await mustOpenSession(
+      makeClaudeCliProvider({
+        spawn: makeSpawner({ isError: true }).spawn,
+        onTurn: (turn) => turns.push(turn),
+      }),
+    );
+    const answer = await refused.prompt("hello");
+    refused.close();
+    expect(answer.ok).toBe(false);
+    expect(turns).toHaveLength(2);
+    expect(turns[1]?.isError).toBe(true);
+    expect(turns[1]?.costUsd).toBe(0.0123);
   });
 });
