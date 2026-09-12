@@ -29,6 +29,14 @@ const answer = await chat.ask("Name the capital of France.");
 if (answer.ok) console.log(answer.value.side, answer.value.text);
 ```
 
+`ask` and `askStream` take a second argument, `{ schema }`, and pass it on
+unchanged to whichever side answers. That side honours it or refuses it, as the
+contract has every backend do; the router never drops it on the way. It is the
+one per-turn option that crosses a router: a caller above it that asks in a
+shape — an agent reading tool calls out of the answer — needs the shape to
+reach the model, and for want of this parameter it once got prose from the
+local side and had to dig the object out of thirty kilobytes of second thoughts.
+
 The providers are handed in, so this package depends on none of them: any
 `AiProvider` fits either side, and the two in the example come from
 [modelpact-providers](https://github.com/AvdienkoSergey/modelpact-providers).
@@ -99,8 +107,20 @@ the cost on the last line — and the same four answers every other backend
 gives, green on the same conformance suite. Shapes read off 2.1.138, not off
 the docs:
 
-- `--json-schema` fails with `is_error` under `--tools ""`, so a schema is
-  refused with `unsupported-config` rather than dropped;
+- a schema goes out as `--json-schema`, and the answer comes back not as text
+  but as a call to the CLI's own `StructuredOutput` tool, streamed as
+  `input_json_delta` pieces of one `tool_use` block; the reader switches to
+  that block and drops the text beside it, which is the model's remark about
+  the answer and not the answer. On 2.1.138 the flag failed with `is_error`
+  under `--tools ""`, because the empty list switched that tool off with the
+  rest, and a schema was refused up front; 2.1.236 keeps it on, measured, and
+  a turn that ends without the block is a failure rather than prose;
+- a schema turn runs with `--max-turns 3` where a plain one runs with 1: the
+  `StructuredOutput` call is a turn of the CLI's own, and a model that writes a
+  sentence first is nudged by the CLI to make the call and needs a third.
+  Capped at 1 that ends as `error_max_turns` with `result: null` — the one
+  failure that arrived with no words, until the detail learned to carry the
+  subtype. Nothing can loop on the extra turns, since that tool is the only one;
 - SIGTERM is exit 143, and by then the lifecycle has already errored the stream
   as `aborted`, so it is not reported twice;
 - stateless per turn on purpose — rendered history instead of `--resume`, or a

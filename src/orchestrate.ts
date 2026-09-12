@@ -19,11 +19,26 @@ import type {
   AiProvider,
   AiSession,
   ContextUsage,
+  JsonSchema,
   ModelAccess,
   Result,
 } from "modelpact";
 
 export type Side = "local" | "cloud";
+
+/**
+ * Per-turn options, passed on unchanged to whichever side answers.
+ *
+ * Only a schema, because it is the one option a caller above a router needs
+ * per turn and the one that was lost here: an agent that asks in a shape got
+ * prose from the local side for want of this parameter, and had to read the
+ * object out of thirty kilobytes of second thoughts. A signal is the
+ * session's; usage is a side's; neither passes through.
+ */
+export interface AskOptions {
+  /** Honoured or refused by the side that answers, never dropped on the way. */
+  readonly schema?: JsonSchema;
+}
 
 export type Policy =
   /** Decided from the input alone: length, a keyword, a marker of private data. */
@@ -69,7 +84,10 @@ export interface Answer {
 export interface Orchestrator {
   /** The conversation both sides are part of, oldest first. */
   readonly record: () => readonly AiMessage[];
-  readonly ask: (input: string) => Promise<Result<Answer, AiFailure>>;
+  readonly ask: (
+    input: string,
+    options?: AskOptions,
+  ) => Promise<Result<Answer, AiFailure>>;
   /**
    * The same turn, in pieces. `escalate` cannot stream: it has to read the
    * local answer whole before it knows whether to keep it, so the accepted
@@ -77,6 +95,7 @@ export interface Orchestrator {
    */
   readonly askStream: (
     input: string,
+    options?: AskOptions,
   ) => Promise<Result<ReadableStream<string>, AiFailure>>;
   readonly close: () => void;
 }
@@ -196,20 +215,25 @@ class TwoModelChat implements Orchestrator {
 
   readonly record = (): readonly AiMessage[] => this.#record;
 
-  readonly ask = async (input: string): Promise<Result<Answer, AiFailure>> => {
+  readonly ask = async (
+    input: string,
+    options?: AskOptions,
+  ): Promise<Result<Answer, AiFailure>> => {
     const policy = this.#parts.policy;
-    if (policy.kind === "escalate") return this.#escalate(input, policy.accept);
+    if (policy.kind === "escalate")
+      return this.#escalate(input, policy.accept, options);
     const side = await this.#chooseSide(input);
-    return this.#turn(side, input);
+    return this.#turn(side, input, options);
   };
 
   readonly askStream = async (
     input: string,
+    options?: AskOptions,
   ): Promise<Result<ReadableStream<string>, AiFailure>> => {
     const policy = this.#parts.policy;
     // Whole first, then one piece: `escalate` has to see the answer to judge it.
     if (policy.kind === "escalate") {
-      const answerResult = await this.#escalate(input, policy.accept);
+      const answerResult = await this.#escalate(input, policy.accept, options);
       return answerResult.ok
         ? ok(makeSingleChunkStream(answerResult.value.text))
         : answerResult;
@@ -218,7 +242,7 @@ class TwoModelChat implements Orchestrator {
     const sideSession = this.#getSideSession(side);
     const sessionResult = await sideSession.getCurrentSession(this.#record);
     if (!sessionResult.ok) return sessionResult;
-    const streamResult = await sessionResult.value.promptStream(input);
+    const streamResult = await sessionResult.value.promptStream(input, options);
     if (!streamResult.ok) return streamResult;
     return ok(
       this.#recordingStream(streamResult.value, side, input, sideSession),
@@ -277,11 +301,15 @@ class TwoModelChat implements Orchestrator {
     return this.#reportRoute("local", "judge answered outside the shape");
   }
 
-  async #turn(side: Side, input: string): Promise<Result<Answer, AiFailure>> {
+  async #turn(
+    side: Side,
+    input: string,
+    options?: AskOptions,
+  ): Promise<Result<Answer, AiFailure>> {
     const sideSession = this.#getSideSession(side);
     const sessionResult = await sideSession.getCurrentSession(this.#record);
     if (!sessionResult.ok) return sessionResult;
-    const answerResult = await sessionResult.value.prompt(input);
+    const answerResult = await sessionResult.value.prompt(input, options);
     if (!answerResult.ok) return answerResult;
     this.#append(input, answerResult.value, sideSession);
     return ok({
@@ -294,8 +322,9 @@ class TwoModelChat implements Orchestrator {
   async #escalate(
     input: string,
     accept: (answer: string) => boolean,
+    options?: AskOptions,
   ): Promise<Result<Answer, AiFailure>> {
-    const localResult = await this.#turnUnrecorded("local", input);
+    const localResult = await this.#turnUnrecorded("local", input, options);
     if (localResult.ok && accept(localResult.value)) {
       this.#reportRoute("local", "accepted");
       this.#append(input, localResult.value, this.#local);
@@ -311,7 +340,7 @@ class TwoModelChat implements Orchestrator {
         ? "local answer rejected"
         : `local failed: ${localResult.error.kind}`,
     );
-    return this.#turn("cloud", input);
+    return this.#turn("cloud", input, options);
   }
 
   /**
@@ -323,12 +352,13 @@ class TwoModelChat implements Orchestrator {
   async #turnUnrecorded(
     side: Side,
     input: string,
+    options?: AskOptions,
   ): Promise<Result<string, AiFailure>> {
     const sessionResult = await this.#getSideSession(side).getCurrentSession(
       this.#record,
     );
     if (!sessionResult.ok) return sessionResult;
-    return sessionResult.value.prompt(input);
+    return sessionResult.value.prompt(input, options);
   }
 
   /** The record grows only on a turn that was kept, and the answering side is current again. */

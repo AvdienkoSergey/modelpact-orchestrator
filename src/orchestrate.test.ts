@@ -6,6 +6,7 @@
  */
 import { describe, expect, test } from "vitest";
 import { makeMockProvider, type AiProvider } from "modelpact";
+import { CONTRACT_SCHEMA } from "modelpact/testing";
 
 import { orchestrate, type Policy, type Side } from "./orchestrate.js";
 
@@ -195,6 +196,42 @@ describe("orchestrator", () => {
     const answerResult = await chat.ask("hello");
     expect(answerResult.ok).toBe(false);
     if (!answerResult.ok) expect(answerResult.error.kind).toBe("unsupported");
+    chat.close();
+  });
+
+  test("a schema reaches the side that answers, and only on the turn that asked", async () => {
+    const chat = orchestrate({
+      local: makeMockProvider({
+        delayMs: 1,
+        reply: () => ["prose ", "answer"],
+        schemaReply: JSON.stringify({ city: "Paris" }),
+      }),
+      cloud: makeSideProvider("CLOUD"),
+      policy: { kind: "predicate", cloudWhen: () => false },
+    });
+    const shapedResult = await chat.ask("Name the capital of France.", {
+      schema: CONTRACT_SCHEMA,
+    });
+    expect(shapedResult.ok).toBe(true);
+    if (shapedResult.ok)
+      expect(JSON.parse(shapedResult.value.text)).toEqual({ city: "Paris" });
+    const plainResult = await chat.ask("and in a sentence?");
+    expect(plainResult.ok && plainResult.value.text).toBe("prose answer");
+    // One conversation either way: the shape of a turn is not a fork in the record.
+    expect(chat.record()).toHaveLength(4);
+    chat.close();
+  });
+
+  test("a side that cannot take the schema refuses; the router does not drop it on the way", async () => {
+    // The mock without a `schemaReply` refuses a schema, as the contract lets
+    // a backend do. What must not happen is the router quietly asking without
+    // it and handing back prose to a caller about to parse.
+    const chat = makeRoutedChat({ kind: "predicate", cloudWhen: () => false });
+    const answerResult = await chat.ask("Name it.", {
+      schema: CONTRACT_SCHEMA,
+    });
+    expect(answerResult.ok).toBe(false);
+    expect(chat.record()).toHaveLength(0);
     chat.close();
   });
 
