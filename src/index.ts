@@ -2,6 +2,7 @@ export {
   makeClaudeCliBackend,
   makeClaudeCliProvider,
   type ClaudeCliConfig,
+  type CliTurn,
   type Spawned,
   type Spawner,
 } from "./claude-cli.js";

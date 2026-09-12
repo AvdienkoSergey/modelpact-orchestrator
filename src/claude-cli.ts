@@ -64,6 +64,31 @@ export interface ClaudeCliConfig {
   readonly command?: string;
   /** For a test: a process that answers from strings. */
   readonly spawn?: Spawner;
+  /**
+   * Every finished turn, with what the CLI charged for it. The contract has no
+   * field for money — `ContextUsage` is a meter over a window, not a bill —
+   * and a router that pays for one side and not the other needs the bill per
+   * turn, at the moment it comes in. Called for a failed turn too: the money
+   * was spent whether or not the answer arrived.
+   */
+  readonly onTurn?: (turn: CliTurn) => void;
+}
+
+/** One `result` line of the CLI, the parts that are about cost. */
+export interface CliTurn {
+  /** What the CLI reports as `total_cost_usd`; zero when it reports nothing. */
+  readonly costUsd: number;
+  readonly durationMs: number;
+  /** Turns the CLI took on its own to produce this one answer. */
+  readonly numTurns: number;
+  readonly usage: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheCreation: number;
+  };
+  /** The CLI's own verdict, so a caller can tell a bill from a refund. */
+  readonly isError: boolean;
 }
 
 const DEFAULTS = { contextWindow: 200_000, command: "claude" };
@@ -410,16 +435,31 @@ class ClaudeCliConnection implements ModelConnection {
     });
   }
 
-  /** The `result` line: the CLI's own error flag, and the counts for the meter. */
+  /**
+   * The `result` line: the CLI's own error flag, the counts for the meter,
+   * and the bill for whoever asked to see it. The bill goes out before the
+   * error is raised: a turn the CLI refused still cost what it says.
+   */
   #finishTurn(line: Record<string, unknown>): void {
-    if (line.is_error === true)
-      throw new AiError({ kind: "failed", detail: describeCliError(line) });
     const usage = asRecord(line.usage) ?? {};
+    const counts = {
+      input: asNumber(usage.input_tokens),
+      output: asNumber(usage.output_tokens),
+      cacheRead: asNumber(usage.cache_read_input_tokens),
+      cacheCreation: asNumber(usage.cache_creation_input_tokens),
+    };
+    const isError = line.is_error === true;
+    this.#config.onTurn?.({
+      costUsd: asNumber(line.total_cost_usd),
+      durationMs: asNumber(line.duration_ms),
+      numTurns: asNumber(line.num_turns),
+      usage: counts,
+      isError,
+    });
+    if (isError)
+      throw new AiError({ kind: "failed", detail: describeCliError(line) });
     this.#usedTokens =
-      asNumber(usage.input_tokens) +
-      asNumber(usage.cache_read_input_tokens) +
-      asNumber(usage.cache_creation_input_tokens) +
-      asNumber(usage.output_tokens);
+      counts.input + counts.cacheRead + counts.cacheCreation + counts.output;
   }
 }
 
