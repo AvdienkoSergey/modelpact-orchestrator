@@ -1,6 +1,6 @@
 {
   "name": "modelpact-orchestrator",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Several models in one conversation, routed by a policy: any modelpact providers you name — Ollama, OpenAI, on-device — plus Claude from the terminal you already pay for",
   "keywords": [
     "llm",
