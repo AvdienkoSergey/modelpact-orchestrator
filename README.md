@@ -5,9 +5,9 @@
 ![node: ≥22](https://img.shields.io/badge/node-%E2%89%A522-339933)
 [![license: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
-**Two models in one conversation, and a policy that picks between them. Claude
-from the `claude` you already pay for, a local one from Ollama, one record
-across both.**
+**Several models in one conversation, and a policy that picks between them.
+Claude from the `claude` you already pay for, a local one from Ollama, one
+record across all of them.**
 
 ## Install
 
@@ -20,14 +20,69 @@ import { orchestrate, makeClaudeCliProvider } from "modelpact-orchestrator";
 import { makeOllamaProvider } from "modelpact-providers";
 
 const chat = orchestrate({
-  local: makeOllamaProvider({ model: "granite4:350m" }),
-  cloud: makeClaudeCliProvider({ model: "sonnet", maxBudgetUsd: 0.5 }),
-  policy: { kind: "predicate", cloudWhen: (input) => input.length > 240 },
+  sides: {
+    local: makeOllamaProvider({ model: "granite4:350m" }),
+    cloud: makeClaudeCliProvider({ model: "sonnet", maxBudgetUsd: 0.5 }),
+  },
+  policy: {
+    kind: "predicate",
+    choose: (input) => (input.length > 240 ? "cloud" : "local"),
+  },
 });
 
 const answer = await chat.ask("Name the capital of France.");
 if (answer.ok) console.log(answer.value.side, answer.value.text);
 ```
+
+The sides are named by you, and there may be any number of them. Two was never
+a property of the idea, only of the first use. A ladder of three is the same
+router with one more key, and the names — not `"local"` and `"cloud"` — are
+what comes back in `Answer.side` and in `onRoute`, so the log already speaks
+the caller's own vocabulary:
+
+```ts
+const chat = orchestrate({
+  sides: {
+    granite: makeOllamaProvider({ model: "granite4:350m" }),
+    haiku: makeClaudeCliProvider({ model: "haiku", maxBudgetUsd: 0.5 }),
+    sonnet: makeClaudeCliProvider({ model: "sonnet", maxBudgetUsd: 2 }),
+  },
+  // Tried in order; the last one's answer is kept whether it is liked or not,
+  // because after it there is nothing left to escalate to.
+  policy: { kind: "escalate", accept: (answer) => answer.length > 40 },
+});
+```
+
+Insertion order is the caller's own ordering — cheapest first is what the
+policies assume — and the first side is where a turn goes when nothing else
+decides: an unusable judge, a judge that answered outside the shape. A name
+that is no side at all is a bug in the caller and comes back as an
+`invalid-input` refusal naming what it could have said, rather than a silent
+fall back to some other model that would answer at a price nobody chose.
+
+### Migrating from 1.x
+
+`local` and `cloud` were two fixed keys; they are now two entries in `sides`,
+and a `predicate` names the side instead of answering yes-or-no about the cloud.
+
+```diff
+ const chat = orchestrate({
+-  local: small,
+-  cloud: big,
+-  policy: { kind: "predicate", cloudWhen: (input) => input.length > 240 },
++  sides: { local: small, cloud: big },
++  policy: {
++    kind: "predicate",
++    choose: (input) => (input.length > 240 ? "cloud" : "local"),
++  },
+ });
+```
+
+`Side` is now `string` rather than `"local" | "cloud"`, `accept` on `escalate`
+takes the side as a second argument and the policy takes an optional `order`,
+and `classify`'s judge answers with a side's name. Keep the two names and
+nothing else changes: the record, the reopen rule and the meters are as they
+were.
 
 `ask` and `askStream` take a second argument, `{ schema }`, and pass it on
 unchanged to whichever side answers. That side honours it or refuses it, as the
@@ -48,7 +103,8 @@ composed into one, plugged in where a transport goes. It passed the conformance
 suite. It was still wrong, and everything that had to be forced said so:
 
 - a usage meter had to pick a side, though two models have two windows and two
-  tokenizers, so the number it reported was true of neither;
+  tokenizers, so the number it reported was true of neither — and with three
+  sides it would have been true of none of them;
 - an overflow event from one side meant nothing for the other;
 - the inner provider had to be reopened every turn to be told about turns it
   had not answered, because a provider keeps its own conversation and a backend
@@ -79,18 +135,18 @@ not an `AiSession` and does not pretend to be: `ask()` returns the answer, the
 side that gave it, and **that side's** meter. No third meter over two models,
 because there is no such thing.
 
-| `policy.kind` | Decides by                                                            |
-| ------------- | --------------------------------------------------------------------- |
-| `predicate`   | a function of the input — length, a keyword, a privacy marker         |
-| `escalate`    | the local answer, whole, kept only if `accept` says so; else cloud    |
-| `classify`    | a judge provider asked which way to send it; a small local model fits |
+| `policy.kind` | Decides by                                                              |
+| ------------- | ----------------------------------------------------------------------- |
+| `predicate`   | a function of the input naming a side — length, a keyword, a marker     |
+| `escalate`    | each answer in turn, whole, kept as soon as `accept` says so            |
+| `classify`    | a judge provider asked which side to send it to; a small local one fits |
 
 `classify` is two models cooperating: a 350M model decides, a 14B one or Claude
 answers.
 
 **How a side is kept in the conversation.** A session that has answered every
 turn since it was opened is current, and is left alone — reopening a model that
-keeps its own transcript costs the state it built. When the other side has
+keeps its own transcript costs the state it built. When another side has
 spoken since, it is reopened on the record. That is the whole rule, and it is a
 decision this package makes about its own conversation, not something the
 contract had to be talked into.
@@ -165,8 +221,9 @@ daemon on the machine; the pickers swap either side for the real thing.
 conformance suite, because this was never honestly a provider. It tests what it
 actually promises, on `makeMockProvider` from the engine: which side answers,
 that a warm side is not reopened for nothing, that a rejected answer never
-reaches the record, and — the one that matters — local, cloud, local, with the
-third turn seeing the second. That test goes red if the reopen rule is removed,
+reaches the record, that a ladder of three stops at the first accepted rung
+without paying for the one above it, and — the one that matters — local, cloud,
+local, with the third turn seeing the second. That test goes red if the reopen rule is removed,
 checked by removing it.
 
 [`src/claude-cli.test.ts`](src/claude-cli.test.ts) runs the conformance suite

@@ -207,15 +207,20 @@ export class Demo {
           );
 
     this.#chat = orchestrate({
-      local: this.#local.watch.provider,
-      cloud: this.#cloud.watch.provider,
+      sides: {
+        local: this.#local.watch.provider,
+        cloud: this.#cloud.watch.provider,
+      },
       policy: this.#policy(),
       system: "Answer briefly.",
       history: this.#record.map(({ role, content }): AiMessage => ({
         role,
         content,
       })),
-      onRoute: (side, reason) => {
+      // The router names its sides with any string; this demo has exactly two,
+      // so the name comes back narrowed to the pair the protocol draws.
+      onRoute: (routed, reason) => {
+        const side: Side = routed === "cloud" ? "cloud" : "local";
         this.#lastSide = side;
         const said = this.#judge?.watch.said();
         if (reason.startsWith("judge") && said !== null && said !== undefined) {
@@ -234,7 +239,10 @@ export class Demo {
   #policy(): Policy {
     switch (this.#setup.policy) {
       case "predicate":
-        return { kind: "predicate", cloudWhen: CLOUD_WHEN };
+        return {
+          kind: "predicate",
+          choose: (input) => (CLOUD_WHEN(input) ? "cloud" : "local"),
+        };
       case "escalate":
         return {
           kind: "escalate",
