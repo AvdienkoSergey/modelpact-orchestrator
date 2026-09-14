@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0](https://github.com/AvdienkoSergey/modelpact-orchestrator/compare/v1.2.0...v1.3.0) (2026-09-14)
+
+
+### Features
+
+* as many sides as the caller names ([2b7d956](https://github.com/AvdienkoSergey/modelpact-orchestrator/commit/2b7d956eaf5c9ad48931c8b892ca10cdde8fbf23))
+* as many sides as the caller names ([be06926](https://github.com/AvdienkoSergey/modelpact-orchestrator/commit/be06926b6a871843c4871e9335326707e40ff635))
+
+
+### Build System
+
+* **deps:** bump the dev-dependencies group with 5 updates ([5376126](https://github.com/AvdienkoSergey/modelpact-orchestrator/commit/5376126def64579f374cc69bba7068e4860d5305))
+* **deps:** bump the dev-dependencies group with 5 updates ([f5f541f](https://github.com/AvdienkoSergey/modelpact-orchestrator/commit/f5f541f004294af8c0f8de539ef61b6f33d94d43))
+
 ## [1.2.0](https://github.com/AvdienkoSergey/modelpact-orchestrator/compare/v1.1.0...v1.2.0) (2026-09-12)
 
 
