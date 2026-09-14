@@ -5,9 +5,9 @@
 ![node: ≥22](https://img.shields.io/badge/node-%E2%89%A522-339933)
 [![license: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
-**Several models in one conversation, and a policy that picks between them.
-Claude from the `claude` you already pay for, a local one from Ollama, one
-record across all of them.**
+**Several models in one conversation, and a policy that picks between them. Any
+modelpact providers you name — Ollama, OpenAI, on-device — plus Claude from the
+`claude` you already pay for, and one record across all of them.**
 
 ## Install
 
@@ -113,7 +113,7 @@ suite. It was still wrong, and everything that had to be forced said so:
   streaming from inside a slot whose whole promise is a stream.
 
 Four leaks, one hole. A session is a relationship with **one** model, and every
-guarantee it makes assumes that. Two models under one session share a
+guarantee it makes assumes that. Several models under one session share a
 transcript and nothing else.
 
 There are three storeys, and the router belongs on the third:
@@ -130,9 +130,9 @@ already the door for handing a session a conversation it did not have.
 
 ## What it is, and honestly is not
 
-`orchestrate()` holds two providers, a record of its own, and a policy. It is
-not an `AiSession` and does not pretend to be: `ask()` returns the answer, the
-side that gave it, and **that side's** meter. No third meter over two models,
+`orchestrate()` holds the providers you name, a record of its own, and a policy.
+It is not an `AiSession` and does not pretend to be: `ask()` returns the answer,
+the side that gave it, and **that side's** meter. No meter spanning the sides,
 because there is no such thing.
 
 | `policy.kind` | Decides by                                                              |
