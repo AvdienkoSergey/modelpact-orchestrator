@@ -1,5 +1,5 @@
 /**
- * Two models in one conversation, and a policy that picks between them.
+ * Several models in one conversation, and a policy that picks between them.
  *
  * A consumer of `modelpact`, not an extension of it. The first version of this
  * file was a `ModelBackend` composed of two others, and every guarantee a
@@ -8,9 +8,16 @@
  * session that had to be reopened to be told about turns it had not answered.
  * None of that was a hard problem badly solved. It was one storey too low.
  *
- * Up here nothing has to be forced. A session is one model's; this holds two of
- * them and a record of its own, and `open({ history })` — the door the contract
- * already has — is how a side is handed the conversation it missed.
+ * Up here nothing has to be forced. A session is one model's; this holds as
+ * many as the caller names and a record of its own, and `open({ history })` —
+ * the door the contract already has — is how a side is handed the conversation
+ * it missed.
+ *
+ * The sides are named by the caller and there may be any number of them. Two
+ * was never a property of the idea, only of the first use: a local model and a
+ * cloud one. A ladder of three — small, middle, strong — is the same router
+ * with one more key, and a single side is the degenerate case that routes
+ * nowhere, which is exactly what a caller with one model wants it to do.
  */
 
 import type {
@@ -24,7 +31,13 @@ import type {
   Result,
 } from "modelpact";
 
-export type Side = "local" | "cloud";
+/**
+ * The name the caller gave a side. Any string: these names are the caller's
+ * vocabulary — "local" and "cloud", or "granite", "haiku", "sonnet" — and they
+ * come back in `Answer.side` and in `onRoute`, so they are what its logs and
+ * its policy already speak.
+ */
+export type Side = string;
 
 /**
  * Per-turn options, passed on unchanged to whichever side answers.
@@ -44,18 +57,29 @@ export type Policy =
   /** Decided from the input alone: length, a keyword, a marker of private data. */
   | {
       readonly kind: "predicate";
-      readonly cloudWhen: (
-        input: string,
-        history: readonly AiMessage[],
-      ) => boolean;
+      /**
+       * The name of the side to answer this turn. A name that is not a side is
+       * a bug in the caller, and comes back as an `invalid-input` refusal
+       * naming what it could have said — not a silent fall back to some other
+       * model, which would answer at a price nobody chose.
+       */
+      readonly choose: (input: string, history: readonly AiMessage[]) => Side;
     }
   /**
-   * The local side answers first, whole, and the answer is kept only if
-   * `accept` says so. Nothing streams before the decision, because an answer
-   * that is thrown away cannot be un-shown. That is the cost of the policy,
-   * not a limitation of anything under it.
+   * Sides are tried in order and the first answer `accept` keeps is the one
+   * kept. Nothing streams before the decision, because an answer that is
+   * thrown away cannot be un-shown. That is the cost of the policy, not a
+   * limitation of anything under it.
+   *
+   * The last side in the order is the backstop: its answer is kept whether
+   * `accept` likes it or not, because there is nothing further to ask.
    */
-  | { readonly kind: "escalate"; readonly accept: (answer: string) => boolean }
+  | {
+      readonly kind: "escalate";
+      /** Defaults to every side, in the order the caller listed them. */
+      readonly order?: readonly Side[];
+      readonly accept: (answer: string, side: Side) => boolean;
+    }
   /** A judge — meant to be a small local model — is asked with a schema which way to send the turn. */
   | {
       readonly kind: "classify";
@@ -64,10 +88,15 @@ export type Policy =
     };
 
 export interface OrchestratorParts {
-  readonly local: AiProvider;
-  readonly cloud: AiProvider;
+  /**
+   * The sides, by name. Insertion order is the caller's own ordering — cheapest
+   * first is the convention the policies assume — and the first one is where a
+   * turn goes when nothing else decides: an unusable judge, a policy that
+   * cannot choose.
+   */
+  readonly sides: Readonly<Record<Side, AiProvider>>;
   readonly policy: Policy;
-  /** Given to every session opened, on either side. */
+  /** Given to every session opened, on any side. */
   readonly system?: string;
   /** The conversation to start from, as `AiSession` takes one. */
   readonly history?: readonly AiMessage[];
@@ -82,16 +111,16 @@ export interface Answer {
 }
 
 export interface Orchestrator {
-  /** The conversation both sides are part of, oldest first. */
+  /** The conversation every side is part of, oldest first. */
   readonly record: () => readonly AiMessage[];
   readonly ask: (
     input: string,
     options?: AskOptions,
   ) => Promise<Result<Answer, AiFailure>>;
   /**
-   * The same turn, in pieces. `escalate` cannot stream: it has to read the
-   * local answer whole before it knows whether to keep it, so the accepted
-   * answer arrives as one piece.
+   * The same turn, in pieces. `escalate` cannot stream: it has to read an
+   * answer whole before it knows whether to keep it, so the accepted answer
+   * arrives as one piece.
    */
   readonly askStream: (
     input: string,
@@ -100,8 +129,13 @@ export interface Orchestrator {
   readonly close: () => void;
 }
 
-const ROUTE_BRIEF =
-  "You route a user's message to one of two models. Answer local for greetings, small talk, simple factual questions, formatting and short tasks. Answer cloud for multi-step reasoning, long writing, code that must be correct, or anything where a mistake is costly.";
+/**
+ * The default brief names the sides in the caller's own order, so a judge that
+ * knows nothing about them still knows what it may answer and which way is
+ * cheap. A caller whose names carry no such meaning passes its own `brief`.
+ */
+const routeBrief = (names: readonly Side[]): string =>
+  `You route a user's message to one of several models, named: ${names.join(", ")}. They are listed cheapest and smallest first. Answer with the earliest one that can do the message well: the earliest names for greetings, small talk, simple factual questions, formatting and short tasks; a later one for multi-step reasoning, long writing, code that must be correct, or anything where a mistake is costly.`;
 
 /** `JSON.parse` hands back `any`; this is the one door that makes it `unknown`. */
 const parseJson = (text: string): unknown => {
@@ -114,6 +148,12 @@ const parseJson = (text: string): unknown => {
 
 const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
 const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
+
+/** A name that is not a side: the caller's bug, said back with what it could have said. */
+const notASide = (chosen: Side, names: readonly Side[]): AiFailure => ({
+  kind: "invalid-input",
+  detail: `the policy chose "${chosen}", which is not one of the sides: ${names.join(", ")}`,
+});
 
 const openSessionOn = async (
   provider: AiProvider,
@@ -145,7 +185,7 @@ const makeSingleChunkStream = (text: string): ReadableStream<string> =>
  * One side's session, opened lazily and kept while it stays current.
  *
  * A model that keeps its own transcript is warm: reopening it costs the state
- * it built. So it is reopened only when the other side has spoken since, which
+ * it built. So it is reopened only when another side has spoken since, which
  * is the one case where its own idea of the conversation has gone stale. A
  * model with no memory does not care either way and is handed the record
  * every time by the same rule.
@@ -195,17 +235,43 @@ class SideSession {
   }
 }
 
-class TwoModelChat implements Orchestrator {
+class RoutedChat implements Orchestrator {
   readonly #parts: OrchestratorParts;
-  readonly #local: SideSession;
-  readonly #cloud: SideSession;
+  readonly #sides: Map<Side, SideSession>;
+  /** Where a turn goes when nothing decided it: the first side the caller named. */
+  readonly #first: Side;
   readonly #judge: SideSession | null;
   #record: readonly AiMessage[];
 
   constructor(parts: OrchestratorParts) {
+    const entries = Object.entries(parts.sides);
+    const [firstEntry] = entries;
+    // A router with no sides has nothing to route to, and an `escalate` order
+    // naming a side that does not exist is a typo that would otherwise surface
+    // as a refusal on some turn much later. Both are wrong at construction, so
+    // both are said at construction — the one place in this file that throws.
+    if (firstEntry === undefined)
+      throw new Error("orchestrate: at least one side is needed");
+    if (parts.policy.kind === "escalate" && parts.policy.order !== undefined) {
+      const order = parts.policy.order;
+      if (order.length === 0)
+        throw new Error("orchestrate: an escalate order cannot be empty");
+      const unknown = order.filter((side) => !(side in parts.sides));
+      if (unknown.length > 0)
+        throw new Error(
+          `orchestrate: the escalate order names sides that do not exist: ${unknown.join(", ")}`,
+        );
+      if (new Set(order).size !== order.length)
+        throw new Error("orchestrate: the escalate order repeats a side");
+    }
     this.#parts = parts;
-    this.#local = new SideSession(parts.local, parts.system);
-    this.#cloud = new SideSession(parts.cloud, parts.system);
+    this.#sides = new Map(
+      entries.map(([name, provider]) => [
+        name,
+        new SideSession(provider, parts.system),
+      ]),
+    );
+    this.#first = firstEntry[0];
     this.#judge =
       parts.policy.kind === "classify"
         ? new SideSession(parts.policy.judge, undefined)
@@ -221,9 +287,10 @@ class TwoModelChat implements Orchestrator {
   ): Promise<Result<Answer, AiFailure>> => {
     const policy = this.#parts.policy;
     if (policy.kind === "escalate")
-      return this.#escalate(input, policy.accept, options);
-    const side = await this.#chooseSide(input);
-    return this.#turn(side, input, options);
+      return this.#escalate(input, policy, options);
+    const sideResult = await this.#chooseSide(input);
+    if (!sideResult.ok) return sideResult;
+    return this.#turn(sideResult.value, input, options);
   };
 
   readonly askStream = async (
@@ -231,15 +298,18 @@ class TwoModelChat implements Orchestrator {
     options?: AskOptions,
   ): Promise<Result<ReadableStream<string>, AiFailure>> => {
     const policy = this.#parts.policy;
-    // Whole first, then one piece: `escalate` has to see the answer to judge it.
+    // Whole first, then one piece: `escalate` has to see an answer to judge it.
     if (policy.kind === "escalate") {
-      const answerResult = await this.#escalate(input, policy.accept, options);
+      const answerResult = await this.#escalate(input, policy, options);
       return answerResult.ok
         ? ok(makeSingleChunkStream(answerResult.value.text))
         : answerResult;
     }
-    const side = await this.#chooseSide(input);
-    const sideSession = this.#getSideSession(side);
+    const sideResult = await this.#chooseSide(input);
+    if (!sideResult.ok) return sideResult;
+    const side = sideResult.value;
+    const sideSession = this.#sides.get(side);
+    if (sideSession === undefined) return err(notASide(side, this.#names()));
     const sessionResult = await sideSession.getCurrentSession(this.#record);
     if (!sessionResult.ok) return sessionResult;
     const streamResult = await sessionResult.value.promptStream(input, options);
@@ -250,13 +320,12 @@ class TwoModelChat implements Orchestrator {
   };
 
   readonly close = (): void => {
-    this.#local.close();
-    this.#cloud.close();
+    for (const side of this.#sides.values()) side.close();
     this.#judge?.close();
   };
 
-  #getSideSession(side: Side): SideSession {
-    return side === "cloud" ? this.#cloud : this.#local;
+  #names(): readonly Side[] {
+    return [...this.#sides.keys()];
   }
 
   #reportRoute(side: Side, reason: string): Side {
@@ -264,41 +333,49 @@ class TwoModelChat implements Orchestrator {
     return side;
   }
 
-  async #chooseSide(input: string): Promise<Side> {
+  /**
+   * Which side answers. A refusal here is the caller's own bug — a policy that
+   * named something that is not a side — and no route is reported for it:
+   * nothing was routed anywhere.
+   */
+  async #chooseSide(input: string): Promise<Result<Side, AiFailure>> {
     const policy = this.#parts.policy;
-    if (policy.kind === "predicate")
-      return this.#reportRoute(
-        policy.cloudWhen(input, this.#record) ? "cloud" : "local",
-        "predicate",
-      );
+    if (policy.kind === "predicate") {
+      const chosen = policy.choose(input, this.#record);
+      if (!this.#sides.has(chosen)) return err(notASide(chosen, this.#names()));
+      return ok(this.#reportRoute(chosen, "predicate"));
+    }
     if (policy.kind !== "classify")
-      return this.#reportRoute("local", "no policy");
-    return this.#askJudge(input, policy.brief ?? ROUTE_BRIEF);
+      return ok(this.#reportRoute(this.#first, "no policy"));
+    return ok(
+      await this.#askJudge(input, policy.brief ?? routeBrief(this.#names())),
+    );
   }
 
   /** The judge sees the message and nothing else: it decides where a turn goes, not what it says. */
   async #askJudge(input: string, brief: string): Promise<Side> {
     const judge = this.#judge;
-    if (judge === null) return this.#reportRoute("local", "no judge");
+    if (judge === null) return this.#reportRoute(this.#first, "no judge");
     const sessionResult = await judge.getCurrentSession([]);
     if (!sessionResult.ok)
       return this.#reportRoute(
-        "local",
+        this.#first,
         `judge unavailable: ${sessionResult.error.kind}`,
       );
+    const names = this.#names();
     const answerResult = await sessionResult.value.prompt(
-      `${brief}\n\nMessage:\n${input}\n\nAnswer with JSON: {"route":"local"} or {"route":"cloud"}.`,
+      `${brief}\n\nMessage:\n${input}\n\nAnswer with JSON: {"route":"<one of: ${names.join(", ")}>"}.`,
     );
     if (!answerResult.ok)
       return this.#reportRoute(
-        "local",
+        this.#first,
         `judge refused: ${answerResult.error.kind}`,
       );
     const parsedAnswer = parseJson(answerResult.value);
     const route = (parsedAnswer as { route?: unknown } | null)?.route;
-    if (route === "cloud" || route === "local")
+    if (typeof route === "string" && this.#sides.has(route))
       return this.#reportRoute(route, "judge");
-    return this.#reportRoute("local", "judge answered outside the shape");
+    return this.#reportRoute(this.#first, "judge answered outside the shape");
   }
 
   async #turn(
@@ -306,7 +383,8 @@ class TwoModelChat implements Orchestrator {
     input: string,
     options?: AskOptions,
   ): Promise<Result<Answer, AiFailure>> {
-    const sideSession = this.#getSideSession(side);
+    const sideSession = this.#sides.get(side);
+    if (sideSession === undefined) return err(notASide(side, this.#names()));
     const sessionResult = await sideSession.getCurrentSession(this.#record);
     if (!sessionResult.ok) return sessionResult;
     const answerResult = await sessionResult.value.prompt(input, options);
@@ -319,44 +397,63 @@ class TwoModelChat implements Orchestrator {
     });
   }
 
+  /**
+   * Down the order until an answer is accepted. Every side but the last may
+   * have its answer thrown away; the last one is asked the ordinary way,
+   * because after it there is nothing left to escalate to.
+   */
   async #escalate(
     input: string,
-    accept: (answer: string) => boolean,
+    policy: Extract<Policy, { kind: "escalate" }>,
     options?: AskOptions,
   ): Promise<Result<Answer, AiFailure>> {
-    const localResult = await this.#turnUnrecorded("local", input, options);
-    if (localResult.ok && accept(localResult.value)) {
-      this.#reportRoute("local", "accepted");
-      this.#append(input, localResult.value, this.#local);
-      return ok({
-        side: "local",
-        text: localResult.value,
-        usage: this.#local.usage(),
+    const order = policy.order ?? this.#names();
+    const lastSide = order.at(-1);
+    // The constructor refuses an empty order, so this is the same refusal said
+    // where the compiler can see it rather than an assertion hiding it.
+    if (lastSide === undefined)
+      return err({
+        kind: "invalid-input",
+        detail: "an escalate order cannot be empty",
       });
+    let reason = "only side";
+    for (const side of order.slice(0, -1)) {
+      const sideSession = this.#sides.get(side);
+      if (sideSession === undefined) return err(notASide(side, this.#names()));
+      const attemptResult = await this.#askUnrecorded(
+        sideSession,
+        input,
+        options,
+      );
+      if (attemptResult.ok && policy.accept(attemptResult.value, side)) {
+        this.#reportRoute(side, "accepted");
+        this.#append(input, attemptResult.value, sideSession);
+        return ok({
+          side,
+          text: attemptResult.value,
+          usage: sideSession.usage(),
+        });
+      }
+      reason = attemptResult.ok
+        ? `${side} answer rejected`
+        : `${side} failed: ${attemptResult.error.kind}`;
     }
-    this.#reportRoute(
-      "cloud",
-      localResult.ok
-        ? "local answer rejected"
-        : `local failed: ${localResult.error.kind}`,
-    );
-    return this.#turn("cloud", input, options);
+    this.#reportRoute(lastSide, reason);
+    return this.#turn(lastSide, input, options);
   }
 
   /**
    * A turn whose answer may be thrown away, so it is not appended here. The
-   * local session did append it to its own transcript; the next `sessionFor`
-   * finds it stale against the record and reopens, which is the same rule that
-   * carries a turn across sides.
+   * side's session did append it to its own transcript; the next
+   * `getCurrentSession` finds it stale against the record and reopens, which is
+   * the same rule that carries a turn across sides.
    */
-  async #turnUnrecorded(
-    side: Side,
+  async #askUnrecorded(
+    sideSession: SideSession,
     input: string,
     options?: AskOptions,
   ): Promise<Result<string, AiFailure>> {
-    const sessionResult = await this.#getSideSession(side).getCurrentSession(
-      this.#record,
-    );
+    const sessionResult = await sideSession.getCurrentSession(this.#record);
     if (!sessionResult.ok) return sessionResult;
     return sessionResult.value.prompt(input, options);
   }
@@ -398,5 +495,5 @@ class TwoModelChat implements Orchestrator {
 }
 
 export function orchestrate(parts: OrchestratorParts): Orchestrator {
-  return new TwoModelChat(parts);
+  return new RoutedChat(parts);
 }

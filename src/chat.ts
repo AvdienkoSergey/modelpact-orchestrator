@@ -20,8 +20,10 @@ const getPolicy = (): Policy => {
     case "predicate":
       return {
         kind: "predicate",
-        cloudWhen: (input) =>
-          input.length > 240 || /\bwhy\b|\bprove\b|\bdesign\b/i.test(input),
+        choose: (input) =>
+          input.length > 240 || /\bwhy\b|\bprove\b|\bdesign\b/i.test(input)
+            ? "cloud"
+            : "local",
       };
     case "escalate":
       return {
@@ -42,11 +44,13 @@ const getPolicy = (): Policy => {
 const main = async (): Promise<void> => {
   const policy = getPolicy();
   const chat = orchestrate({
-    local: makeOllamaProvider({ model: env.LOCAL_MODEL ?? "qwen3:14b" }),
-    cloud: makeClaudeCliProvider({
-      model: env.CLAUDE_MODEL ?? "sonnet",
-      maxBudgetUsd: 0.5,
-    }),
+    sides: {
+      local: makeOllamaProvider({ model: env.LOCAL_MODEL ?? "qwen3:14b" }),
+      cloud: makeClaudeCliProvider({
+        model: env.CLAUDE_MODEL ?? "sonnet",
+        maxBudgetUsd: 0.5,
+      }),
+    },
     policy,
     system: "Answer briefly.",
     onRoute: (side, reason) => stdout.write(`\n  [${side}: ${reason}]\n`),

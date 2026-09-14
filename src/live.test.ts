@@ -30,9 +30,14 @@ describe.skipIf(!isClaudeHere || !isOllamaHere)(
       const sides: Side[] = [];
       let turn = 0;
       const chat = orchestrate({
-        local: makeOllamaProvider({ model: "granite4:350m" }),
-        cloud: makeClaudeCliProvider({ model: "sonnet", maxBudgetUsd: 0.2 }),
-        policy: { kind: "predicate", cloudWhen: () => (turn += 1) === 2 },
+        sides: {
+          local: makeOllamaProvider({ model: "granite4:350m" }),
+          cloud: makeClaudeCliProvider({ model: "sonnet", maxBudgetUsd: 0.2 }),
+        },
+        policy: {
+          kind: "predicate",
+          choose: () => ((turn += 1) === 2 ? "cloud" : "local"),
+        },
         system: "Answer in at most eight words.",
         onRoute: (side) => sides.push(side),
       });
