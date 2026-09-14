@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/AvdienkoSergey/modelpact-orchestrator/compare/v1.3.0...v1.3.1) (2026-09-14)
+
+
+### Documentation
+
+* say several where the README still said two ([a2c7287](https://github.com/AvdienkoSergey/modelpact-orchestrator/commit/a2c7287d54240335f201960d186d288a52f4d739))
+
 ## [1.3.0](https://github.com/AvdienkoSergey/modelpact-orchestrator/compare/v1.2.0...v1.3.0) (2026-09-14)
 
 
